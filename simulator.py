@@ -1,237 +1,277 @@
+'''
 import tkinter as tk
 import random
-class Cell:
-    LAND = 0
-    SEA = 1
-    FOREST = 2
-    ICEBERG = 3
-    CITY = 4
-    #colors = ('brown', 'blue', 'green', 'white', 'grey')
-    colors = ((200, 120, 20),
-              (50, 50, 250),
-              (0, 204, 80),
-              (255, 255, 255),
-              (130, 120, 120))
-    def __init__(self, temp, wind, cloud, kind=SEA, pollution_factor=None):
-        self.kind = kind
-        self.temp = temp
-        self.wind = wind
-        self.cloud = cloud
-        if kind == Cell.CITY:
-            self.pollution_factor = pollution_factor if pollution_factor!=None else random.random()
-            #self.color = self.brighten_color(self.pollution_factor * self.colors[kind] + (1-self.pollution_factor)*self.colors[Cell.LAND], 1)
-        #else:
-        self.color = self.brighten_color(self.colors[kind], 1)
-        self.pollution_factor = pollution_factor if kind == Cell.CITY else 0
-        self.pollut = self.pollution_factor
-        #rgb_color = Cell.colors[kind]
-        #self.color = self.brighten_color(rgb_color, 1 + self.pollut)
-        self.rain = 0
-        if kind == Cell.ICEBERG:
-            self.days_above_zero = 0
+import copy
+from world import World
+from tkinter import ttk
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import random
+import numpy as np
+from constants import ZERO_CELSIUS
 
-    @staticmethod
-    def brighten_color(rgb, factor):
-        """
-        Brightens or darkens an RGB color by a factor.
-        :param rgb: Tuple (R, G, B)
-        :param factor: Float between 0 (black) and 1 (original), >1 brightens
-        :return: Hexadecimal color string for tkinter
-        """
-        r, g, b = rgb
-        r = int(min(r * factor, 255))
-        g = int(min(g * factor, 255))
-        b = int(min(b * factor, 255))
-        # Convert back to tkinter-compatible hex color
-        return f'#{r:02x}{g:02x}{b:02x}'
 
-    def update(self):
-        pass
-'''
-class World:
-    LAND = 0
-    SEA = 1
-    FOREST = 2
-    ICEBERG = 3
-    CITY = 4
+class Simulator:
+    CELL_SIZE = 42
+    NUMBERS_FONT = 16
+    TEXT_FONT = 20
+    FRAME_TIME = 1
+    TOTAL_DAYS = 365
+
     def __init__(self):
-        self.cells = [[Cell(20, 0, 0, Cell.CITY, 1), Cell(10, 6, 1, Cell.CITY, 0.7)], [Cell(20, 0, 0, Cell.CITY, 0.3), Cell(10, 6, 1, Cell.CITY, 0)]]
+        self.world = World()
+        self.pollution = []
+        self.temperature = []
+        self.temp_dev = []
+        self.pollute_dev = []
+
+        self.root = tk.Tk()
+
+        # create canvas for matrix
+        self.root.title("Earth simulation")
+        self.canvas = tk.Canvas(self.root, width=self.CELL_SIZE * self.world.cols, height=self.CELL_SIZE * self.world.rows)
+        self.canvas.pack()
+        self.label = tk.Label(self.root, text="", font=("Arial", self.TEXT_FONT))
+        self.label.pack(pady=10)
+
+        # create canvas for graphs
+        self.graph_window = tk.Toplevel(self.root)
+        self.graph_window.title("Graphs")
+        self.fig, (self.ax1, self.ax2) = plt.subplots(1, 2, figsize=(10, 5))
+        self.canvas_graph = FigureCanvasTkAgg(self.fig, master=self.graph_window)
+        self.canvas_graph.draw()
+        self.canvas_graph.get_tk_widget().pack()
+
+        self.day = 0
+
+    def run(self):
+        self.update_matrix()
+        self.root.mainloop()
+
+    def create_matrix(self):
+        self.canvas.delete("all")  # Clear the canvas
+        matrix = self.world.cells
+        for i in range(self.world.rows):
+            for j in range(self.world.cols):
+                x1 = j * self.CELL_SIZE
+                y1 = i * self.CELL_SIZE
+                x2 = x1 + self.CELL_SIZE
+                y2 = y1 + self.CELL_SIZE
+
+                color, number = matrix[i][j].color, round(matrix[i][j].temp - ZERO_CELSIUS)
+                self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="black")
+                self.canvas.create_text(
+                    (x1 + x2) // 2, (y1 + y2) // 2,
+                    text=str(number),
+                    fill="black",
+                    font=("Arial", self.NUMBERS_FONT)
+                )
+
+
+    def update_matrix(self):
+        global day, world, pollution, temperature
+
+        if self.day > self.TOTAL_DAYS:
+            return
+
+        self.create_matrix()
+        self.label.config(text=f'Day {self.day}\n\n{self.world.get_stats()}')
+
+        self.world.update()
+        self.day += 1
+
+        self.update_graphs()
+
+        self.root.after(self.FRAME_TIME, self.update_matrix)  # Call after 1 second
+
+    # function to calculate normalized values, average, and std dev
+    @staticmethod
+    def calculate_statistics(data):
+        average = np.mean(data)
+        std_dev = np.std(data)
+        normalized_data = [(x - average) / std_dev if std_dev != 0 else 0 for x in data]
+        return normalized_data, average, std_dev
+
+    def update_graphs(self):
+        # Append new data for pollution and temperature
+        self.pollution.append(self.world.avrg_pollute)
+        self.temp_dev.append(self.world.temp_dev)
+        self.temperature.append(self.world.avrg_temp)
+        self.pollute_dev.append(self.world.pollute_dev)
+
+        # Calculate normalized data
+        normalized_pollution, avg_pollution, std_pollution = self.calculate_statistics(self.pollution)
+        normalized_temperature, avg_temperature, std_temperature = self.calculate_statistics(self.temperature)
+        normalized_temp_dev, _, _ = self.calculate_statistics(self.temp_dev)
+        normalized_pollute_dev, _, _ = self.calculate_statistics(self.pollute_dev)
+
+        # Clear previous plots
+        self.ax1.clear()
+        self.ax2.clear()
+
+        # Plot normalized temperature and temperature deviation
+        self.ax1.plot(normalized_temperature, label='Normalized Temperature')
+        self.ax1.plot(normalized_temp_dev, label='Normalized Temperature Deviation', linestyle='--')
+        self.ax1.set_title('Normalized Temperature and Deviation Over Time')
+        self.ax1.set_xlabel('Day')
+        self.ax1.set_ylabel('Normalized Temperature')
+        self.ax1.legend()
+
+        # Plot normalized pollution and pollution deviation
+        self.ax2.plot(normalized_pollution, label='Normalized Pollution', color='red')
+        self.ax2.plot(normalized_pollute_dev, label='Normalized Pollution Deviation', color='orange', linestyle='--')
+        self.ax2.set_title('Normalized Pollution and Deviation Over Time')
+        self.ax2.set_xlabel('Day')
+        self.ax2.set_ylabel('Normalized Pollution')
+        self.ax2.legend()
+
+        # Redraw the graphs
+        self.canvas_graph.draw()
+
+
+if __name__ == "__main__":
+    sim = Simulator()
+    sim.run()
 '''
 
-
-class World:
-    L = Cell.LAND
-    S = Cell.SEA
-    F = Cell.FOREST
-    I = Cell.ICEBERG
-    C = Cell.CITY
-    DESIGN = [
-            [I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I],
-            [S, S, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, S, S, S, S, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, S, S],
-            [S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S],
-            [S, S, L, L, S, S, S, L, L, L, C, C, S, L, L, L, L, L, S, S, S, S, S, S, L, L, S, S, L, L, L, L, S, S, S, S, L, L, S, S, S, S, S],
-            [S, L, L, C, C, L, F, F, S, S, L, C, S, S, L, L, L, S, S, L, L, L, L, S, L, S, S, L, L, L, L, L, L, L, L, L, L, L, L, L, L, L, S],
-            [S, L, S, L, C, L, F, F, S, L, S, S, S, S, L, S, S, S, S, L, S, S, F, F, F, F, L, L, L, L, L, L, C, L, L, L, L, L, L, L, L, L, S],
-            [S, S, S, L, L, L, L, L, L, L, L, S, S, S, S, S, S, S, S, S, S, S, F, F, F, F, L, L, L, L, L, C, C, C, L, L, L, L, S, S, L, L, S],
-            [S, S, F, L, L, L, C, C, L, L, S, S, S, S, S, S, S, S, S, F, F, F, F, F, L, L, L, L, C, F, L, C, C, L, L, L, L, L, L, S, S, L, S],
-            [S, S, F, F, L, L, C, C, S, S, S, S, S, S, S, S, S, S, L, L, L, L, L, L, L, L, L, L, F, F, L, L, L, L, L, L, L, L, L, L, S, S, S],
-            [S, S, F, F, F, F, L, S, S, S, S, S, S, S, S, S, S, L, L, L, L, L, S, S, L, F, C, C, L, L, C, L, L, L, L, L, L, L, L, S, L, S, S],
-            [S, S, S, F, F, L, L, S, S, S, S, S, S, S, S, S, S, L, S, S, L, S, L, L, F, F, F, C, L, C, L, C, L, L, L, L, L, S, S, S, L, S, S],
-            [S, S, S, S, L, C, S, S, S, S, S, S, S, S, S, S, S, S, L, L, S, S, S, S, F, F, L, L, L, L, L, L, L, L, F, F, F, F, F, S, L, S, S],
-            [S, S, S, S, C, L, S, S, S, S, S, S, S, S, S, S, S, L, L, L, L, L, L, L, L, L, S, L, L, L, C, L, L, F, F, F, F, F, F, S, S, S, S],
-            [S, S, S, S, S, L, L, L, S, S, S, S, S, S, S, S, L, L, L, L, C, L, L, L, L, L, L, S, S, L, L, L, C, L, F, F, F, F, S, S, S, S, S],
-            [S, S, S, S, S, S, S, L, L, F, F, F, S, S, S, S, L, L, L, C, L, C, L, L, L, S, S, S, S, S, L, L, S, L, L, L, S, S, F, S, S, S, S],
-            [S, S, S, S, S, S, S, S, F, F, F, F, F, S, S, S, S, L, L, L, L, L, L, L, L, L, L, S, S, S, L, C, S, S, L, L, S, S, S, S, S, S, S],
-            [S, S, S, S, S, S, S, S, F, F, F, F, F, F, S, S, S, S, S, L, L, L, L, L, L, L, S, S, S, S, L, L, S, S, L, S, S, C, L, S, S, S, S],
-            [S, S, S, S, S, S, S, S, F, F, F, F, F, F, L, S, S, S, S, S, L, C, L, L, L, L, S, S, S, S, S, L, S, S, S, S, L, C, S, S, S, S, S],
-            [S, S, S, S, S, S, S, S, F, F, F, F, F, F, L, S, S, S, S, S, L, L, L, L, L, S, S, S, S, S, S, S, S, S, L, L, S, S, S, S, L, L, S],
-            [S, S, S, S, S, S, S, S, S, S, L, C, C, L, S, S, S, S, S, S, L, L, C, C, L, S, L, S, S, S, S, S, S, S, S, L, L, L, S, S, S, L, S],
-            [S, S, S, S, S, S, S, S, S, S, F, C, S, S, S, S, S, S, S, S, L, L, L, L, S, L, L, S, S, S, S, S, S, S, S, S, S, S, S, L, S, S, S],
-            [S, S, S, S, S, S, S, S, S, S, F, L, S, S, S, S, S, S, S, S, S, L, L, L, S, L, S, S, S, S, S, S, S, S, S, S, S, L, L, L, L, S, S],
-            [S, S, S, S, S, S, S, S, S, S, S, L, S, S, S, S, S, S, S, S, S, L, L, S, S, L, S, S, S, S, S, S, S, S, S, L, L, L, L, L, L, S, S],
-            [S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, L, S, S, S, S, S, S, S, S, S, S, S, S, S, L, L, L, L, L, L, S],
-            [S, S, S, I, I, I, S, I, I, I, I, I, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, I, I, I, I, I, S, S, S, S, S, S, S, S, S, S],
-            [S, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, S, S, S, S, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, S, S],
-            [I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I],
-        ]
-    def __init__(self, rows = len(DESIGN), cols = len(DESIGN[0])):
-        self.rows = rows
-        self.cols = cols
-        self.cells = self.generate_world()
-
-    def generate_world(self):
-        mat = World.DESIGN
-        world = []
-        for i in range(self.rows):
-            row = []
-            for j in range(self.cols):
-                # Latitude-based temperature distribution (rough approximation)
-                latitude = (i / self.rows) * 180 - 90  # Range from -90 to 90 (degrees)
-                temp = self.generate_temperature(latitude)
-
-                # Pollution factor based on location
-                pollution_factor = self.generate_pollution_factor(i, j)
-
-                # Choose the type of cell based on latitude and other factors
-                #kind = self.determine_cell_type(latitude, i, j)
-                kind = mat[i][j]
-
-                # Create cell and add it to the world
-                row.append(Cell(temp, 0, 0, kind, pollution_factor))
-            world.append(row)
-        return world
-
-    def update(self):
-        cells = []
-        for i in range(self.rows):
-            row = []
-            for j in range(self.cols):
-                row.append(self.cells[i][j].update())
-            cells.append(row)
-        self.cells = cells
-
-    def generate_temperature(self, latitude):
-        """Generate temperature based on latitude (basic model)"""
-        if latitude < -60 or latitude > 60:
-            return random.randint(-30, 0)  # Iceberg/Cold zones (Polar regions)
-        elif -60 <= latitude < -30 or 30 < latitude <= 60:
-            return random.randint(0, 20)  # Cold temperate zones
-        else:
-            return random.randint(20, 40)  # Tropical/Equator zones
-
-    def generate_pollution_factor(self, i, j):
-        """Generate pollution factor based on location"""
-        # Cities have higher pollution
-        if random.random() < 0.05:  # 5% chance of a city
-            return random.uniform(0.7, 1.5)  # Cities have high pollution
-        elif self.is_ocean(i, j):  # Ocean regions have low pollution
-            return 0.1
-        return random.uniform(0.3, 0.7)  # Forest/land has moderate pollution
-
-    def is_ocean(self, i, j):
-        """Returns True if the current cell is part of the ocean"""
-        # Sea cells are mostly in the outer rows/columns (like Earth’s oceans)
-        return (i < self.rows * 0.1 or i > self.rows * 0.9 or
-                j < self.cols * 0.1 or j > self.cols * 0.9)
-
-    def determine_cell_type(self, latitude, i, j):
-        """Determine the type of land (sea, forest, iceberg, etc.) based on latitude and location"""
-        if self.is_ocean(i, j):
-            return Cell.SEA  # Ocean regions
-        elif latitude < -60 or latitude > 60:
-            return Cell.ICEBERG  # Polar regions (Icebergs)
-        elif random.random() < 0.2:  # 20% chance of forest
-            return Cell.FOREST
-        return Cell.LAND  # Default is land
+import tkinter as tk
+import random
+import copy
+from world import World
+from tkinter import ttk
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import random
+import numpy as np
+from constants import ZERO_CELSIUS
 
 
-def create_matrix(canvas, world, cell_size):
-    canvas.delete("all")  # Clear the canvas
-    matrix = world.cells
-    rows = len(matrix)
-    cols = len(matrix[0])
-    for i in range(rows):
-        for j in range(cols):
-            x1 = j * cell_size
-            y1 = i * cell_size
-            x2 = x1 + cell_size
-            y2 = y1 + cell_size
+class Simulator:
+    CELL_SIZE = 42
+    NUMBERS_FONT = 16
+    TEXT_FONT = 20
+    FRAME_TIME = 1
+    TOTAL_DAYS = 365
 
-            # Choose color and number for each cell
-            color, number = matrix[i][j].color, matrix[i][j].temp
+    def __init__(self):
+        self.world = World()
+        self.pollution = []
+        self.temperature = []
+        self.temp_dev = []
+        self.pollute_dev = []
 
-            # Draw rectangle with color
-            canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="black")
+        self.root = tk.Tk()
 
-            # Write number inside the rectangle
-            canvas.create_text(
-                (x1 + x2) // 2, (y1 + y2) // 2,
-                text=str(number),
-                fill="black",
-                font=("Arial", 9)
-            )
+        # Main window layout
+        self.root.title("Earth Simulation")
+
+        # Frame for the matrix (left side)
+        self.matrix_frame = tk.Frame(self.root)
+        self.matrix_frame.pack(side=tk.LEFT, padx=10, pady=10)
+
+        self.canvas = tk.Canvas(
+            self.matrix_frame,
+            width=self.CELL_SIZE * self.world.cols,
+            height=self.CELL_SIZE * self.world.rows
+        )
+        self.canvas.pack()
+        self.label = tk.Label(self.matrix_frame, text="", font=("Arial", self.TEXT_FONT))
+        self.label.pack(pady=10)
+
+        # Frame for the graphs (right side)
+        self.graph_frame = tk.Frame(self.root)
+        self.graph_frame.pack(side=tk.RIGHT, padx=10, pady=10)
+
+        self.fig, (self.ax1, self.ax2) = plt.subplots(1, 2, figsize=(10, 5))
+        self.canvas_graph = FigureCanvasTkAgg(self.fig, master=self.graph_frame)
+        self.canvas_graph.draw()
+        self.canvas_graph.get_tk_widget().pack()
+
+        self.day = 0
+
+    def run(self):
+        self.update_matrix()
+        self.root.mainloop()
+
+    def create_matrix(self):
+        self.canvas.delete("all")  # Clear the canvas
+        matrix = self.world.cells
+        for i in range(self.world.rows):
+            for j in range(self.world.cols):
+                x1 = j * self.CELL_SIZE
+                y1 = i * self.CELL_SIZE
+                x2 = x1 + self.CELL_SIZE
+                y2 = y1 + self.CELL_SIZE
+
+                color, number = matrix[i][j].color, round(matrix[i][j].temp - ZERO_CELSIUS)
+                self.canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="black")
+                self.canvas.create_text(
+                    (x1 + x2) // 2, (y1 + y2) // 2,
+                    text=str(number),
+                    fill="black",
+                    font=("Arial", self.NUMBERS_FONT)
+                )
+
+    def update_matrix(self):
+        if self.day > self.TOTAL_DAYS:
+            return
+
+        self.create_matrix()
+        self.label.config(text=f'Day {self.day}\n\n{self.world.get_stats()}')
+
+        self.world.update()
+        self.day += 1
+
+        self.update_graphs()
+
+        self.root.after(self.FRAME_TIME, self.update_matrix)
+
+    # Function to calculate normalized values, average, and std dev
+    @staticmethod
+    def calculate_statistics(data):
+        average = np.mean(data)
+        std_dev = np.std(data)
+        normalized_data = [(x - average) / std_dev if std_dev != 0 else 0 for x in data]
+        return normalized_data, average, std_dev
+
+    # Function to update the graphs and display statistics
+    def update_graphs(self):
+        # Append new data for pollution and temperature
+        self.pollution.append(self.world.avrg_pollute)
+        self.temp_dev.append(self.world.temp_dev)
+        self.temperature.append(self.world.avrg_temp)
+        self.pollute_dev.append(self.world.pollute_dev)
+
+        # Calculate normalized data
+        normalized_pollution, avg_pollution, std_pollution = self.calculate_statistics(self.pollution)
+        normalized_temperature, avg_temperature, std_temperature = self.calculate_statistics(self.temperature)
+        normalized_temp_dev, _, _ = self.calculate_statistics(self.temp_dev)
+        normalized_pollute_dev, _, _ = self.calculate_statistics(self.pollute_dev)
+
+        # Clear previous plots
+        self.ax1.clear()
+        self.ax2.clear()
+
+        # Plot normalized temperature and temperature deviation
+        self.ax1.plot(normalized_temperature, label='Normalized Temperature')
+        self.ax1.plot(normalized_temp_dev, label='Normalized Temperature Deviation', linestyle='--')
+        self.ax1.set_title('Normalized Temperature and Deviation Over Time')
+        self.ax1.set_xlabel('Day')
+        self.ax1.set_ylabel('Normalized Temperature')
+        self.ax1.legend()
+
+        # Plot normalized pollution and pollution deviation
+        self.ax2.plot(normalized_pollution, label='Normalized Pollution', color='red')
+        self.ax2.plot(normalized_pollute_dev, label='Normalized Pollution Deviation', color='orange', linestyle='--')
+        self.ax2.set_title('Normalized Pollution and Deviation Over Time')
+        self.ax2.set_xlabel('Day')
+        self.ax2.set_ylabel('Normalized Pollution')
+        self.ax2.legend()
+
+        # Redraw the graphs
+        self.canvas_graph.draw()
 
 
-def update_matrix():
-    global current_matrix_index
-    global world
-    world.update()
-    create_matrix(canvas, world, cell_size)
-    label.config(text=f'Day{current_matrix_index}')
-
-
-
-# Corresponding text descriptions
-texts = [
-    "This is the first matrix!",
-    "Here is the second matrix!",
-]
-
-world = World()
-
-
-# Cell size in pixels
-cell_size = 24
-
-# Initialize tkinter
-root = tk.Tk()
-root.title("Matrix Display")
-
-# Create a canvas for the matrix
-canvas = tk.Canvas(root, width=cell_size * len(world.cells[0]), height=cell_size * len(world.cells))
-canvas.pack()
-
-# Add a label below the matrix
-label = tk.Label(root, text=texts[0], font=("Arial", 14))
-label.pack(pady=10)
-
-# Show the first matrix initially
-current_matrix_index = 0
-create_matrix(canvas, world, cell_size)
-
-for i in range(20):
-    current_matrix_index+=1
-    update_matrix()
-
-# Run the tkinter event loop
-root.mainloop()
+if __name__ == "__main__":
+    sim = Simulator()
+    sim.run()
