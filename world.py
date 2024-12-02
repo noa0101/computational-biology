@@ -1,3 +1,7 @@
+'''
+This file contains the class representing the world.
+'''
+
 from cell import Cell
 import random
 import copy
@@ -5,6 +9,7 @@ from constants import WORLD_INITIAL_DESIGN, ZERO_CELSIUS, TEMP_SPREAD, POLLUTION
 import numpy as np
 
 
+# create a custom circular list so that we don't have to deal with limits
 class List(list):
     def __getitem__(self, index):
         if index >= len(self):  # Handle index greater than size
@@ -21,7 +26,7 @@ class World:
             row = List()
             for j in range(self.cols):
                 latitude = (i / self.rows) * 180 - 90  # Range from -90 to 90 (degrees)
-                temp = self.generate_temperature(latitude)
+                temp = World.generate_temperature(latitude)
                 kind = WORLD_INITIAL_DESIGN[i][j]
                 row.append(Cell(temp, kind))
             self.cells.append(row)
@@ -35,6 +40,19 @@ class World:
         self.pollute_dev = None
         self.get_stats()
 
+    # generate the temperature according to the latitude
+    @staticmethod
+    def generate_temperature(latitude):
+        if latitude < -60 or latitude > 60:
+            return random.randint(-30, 0) + ZERO_CELSIUS  # Iceberg/Cold zones (Polar regions)
+        elif -60 <= latitude < -30 or 30 < latitude <= 60:
+            return random.randint(0, 20) + ZERO_CELSIUS  # Cold temperate zones
+        else:
+            return random.randint(20, 40) + ZERO_CELSIUS  # Tropical/Equator zones
+
+    # function to update the statistics of the world
+    # (amount of regions of each kind, temperature and pollution)
+    # also returns a string representing the relevant data nicely
     def get_stats(self):
         amounts = [0, 0, 0, 0, 0]
         temps = []
@@ -60,53 +78,53 @@ class World:
                 f'Average temperature: {self.avrg_temp:.1f} (initial: {self.initial_temp:.1f})\n'
                 f'Average pollution: {self.avrg_pollute:.3f}')
 
+    # function to update each cell according to its neighbors and call its update function.
+    # returns the new updated cell.
     def updated_cell(self, i, j):
-        cell = copy.copy(self.cells[i][j])
+        cell = copy.copy(self.cells[i][j])  # create a copy to not change the current cell
+
+        # average over temperature and pollution
         cell.temp = ((1-4*TEMP_SPREAD)*cell.temp + TEMP_SPREAD *
                      (self.cells[i+1][j].temp+self.cells[i][j+1].temp+self.cells[i-1][j].temp+self.cells[i][j-1].temp))
         cell.pollute = ((1-4*POLLUTION_SPREAD)*cell.pollute + POLLUTION_FADE *
                         (self.cells[i + 1][j].pollute + self.cells[i][j + 1].pollute + self.cells[i - 1][j].pollute + self.cells[i][j - 1].pollute))
 
+        # clouds go away with the wind
         if abs(cell.wind_down) + abs(cell.wind_right) > 2*WIND_BARRIER:
             cell.clouds = False
 
+        # update clouds, wind and pollution if wind from other cells is in the right direction
         if self.cells[i+1][j].wind_down < -1*WIND_BARRIER:
             cell.pollute += POLLUTION_SPREAD*self.cells[i+1][j].pollute
-            cell.wind_down = 0.5*(cell.wind_down + self.cells[i+1][j].wind_down)
             cell.clouds |= self.cells[i+1][j].clouds
 
         if self.cells[i-1][j].wind_down > WIND_BARRIER:
             cell.pollute += POLLUTION_SPREAD*self.cells[i-1][j].pollute
-            cell.wind_down = 0.5*(cell.wind_down + self.cells[i-1][j].wind_down)
             cell.clouds |= self.cells[i-1][j].clouds
 
         if self.cells[i][j+1].wind_right < -1*WIND_BARRIER:
             cell.pollute += POLLUTION_SPREAD*self.cells[i][j+1].pollute
-            cell.wind_right = 0.5*(cell.wind_down + self.cells[i][j+1].wind_right)
             cell.clouds |= self.cells[i][j+1].clouds
 
         if self.cells[i][j-1].wind_right > WIND_BARRIER:
             cell.pollute += POLLUTION_SPREAD*self.cells[i][j-1].pollute
-            cell.wind_right = 0.5*(cell.wind_down + self.cells[i][j-1].wind_right)
             cell.clouds |= self.cells[i][j-1].clouds
 
+        # update wind
         if self.cells[i+1][j].wind_down < 0:
             cell.wind_down = 0.5*(cell.wind_down + self.cells[i+1][j].wind_down)
-
         if self.cells[i-1][j].wind_down > 0:
             cell.wind_down = 0.5*(cell.wind_down + self.cells[i-1][j].wind_down)
-
         if self.cells[i][j+1].wind_right < 0:
             cell.wind_right = 0.5*(cell.wind_down + self.cells[i][j+1].wind_right)
-
         if self.cells[i][j-1].wind_right > 0:
             cell.wind_right = 0.5*(cell.wind_down + self.cells[i][j-1].wind_right)
 
         cell.pollute *= POLLUTION_FADE
-
         cell.update()
         return cell
 
+    # iterate over all cells to update all of them
     def update(self):
         cells = List()
         for i in range(self.rows):
@@ -115,12 +133,3 @@ class World:
                 row.append(self.updated_cell(i, j))
             cells.append(row)
         self.cells = cells
-
-    def generate_temperature(self, latitude):
-        if latitude < -60 or latitude > 60:
-            return random.randint(-30, 0) + 273  # Iceberg/Cold zones (Polar regions)
-        elif -60 <= latitude < -30 or 30 < latitude <= 60:
-            return random.randint(0, 20) + 273  # Cold temperate zones
-        else:
-            return random.randint(20, 40) + 273  # Tropical/Equator zones
-
